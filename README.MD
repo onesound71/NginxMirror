@@ -405,6 +405,189 @@ export default function () {
 }
 ```
 
+### 2. 고급 NGINX 설정
+- SSL/TLS 적용
+- 요청 내용 기반으로 미러링 조건 설정 (특정 헤더, 경로만 미러링)
+- 로드 밸런싱 추가
+
+```nginx
+# 조건부 미러링 예시
+location /api/ {
+    if ($http_x_mirror = "true") {
+        mirror /mirror/;
+    }
+    proxy_pass http://server_a:3000;
+}
+```
+
+#### 다양한 서브 경로 미러링 예제
+
+NGINX는 유연한 미러링 설정을 지원합니다. 아래는 다양한 조건과 경로에 따라 미러링을 수행하는 예제입니다.
+
+##### 1. 특정 서브 경로만 미러링
+
+```nginx
+server {
+    listen 80;
+
+    # /api/users/ 경로만 미러링
+    location /api/users/ {
+        mirror /mirror_users/;
+        proxy_pass http://server_a:3000;
+    }
+
+    # /api/products/ 경로만 미러링
+    location /api/products/ {
+        mirror /mirror_products/;
+        proxy_pass http://server_a:3000;
+    }
+
+    # 일반 API 경로 (미러링 없음)
+    location /api/ {
+        proxy_pass http://server_a:3000;
+    }
+
+    # users 미러링을 위한 내부 위치
+    location = /mirror_users/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+
+    # products 미러링을 위한 내부 위치
+    location = /mirror_products/ {
+        internal;
+        proxy_pass http://server_c:3000;  # 다른 서버로 미러링
+    }
+}
+```
+
+##### 2. HTTP 메서드에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # POST 요청만 미러링
+        if ($request_method = "POST") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 3. 쿼리 파라미터에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # debug=true 쿼리 파라미터가 있을 때만 미러링
+        if ($arg_debug = "true") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 4. 특정 헤더 값이나 쿠키에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # 특정 사용자 에이전트만 미러링
+        if ($http_user_agent ~* "PostmanRuntime") {
+            mirror /mirror/;
+        }
+        # 특정 세션 ID를 가진 요청만 미러링
+        if ($cookie_sessionid = "test-session") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 5. 요청 본문 변경하여 미러링 (주의: 실험적 기능)
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        mirror /mirror/;
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        
+        # 미러링된 요청에 추가 헤더 전달
+        proxy_set_header X-Mirrored-Request "true";
+        
+        # 요청 본문을 그대로 전달
+        proxy_pass_request_body on;
+        
+        # 원본 HTTP 메서드 유지
+        proxy_method $request_method;
+        
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 6. 트래픽 샘플링 (일부 요청만 미러링)
+
+```nginx
+server {
+    listen 80;
+    
+    # 변수 설정
+    set $do_mirror 0;
+    
+    # 약 10%의 요청만 미러링 (임의 샘플링)
+    if ($request_id ~ "^.{0}[0-9a].*$") {
+        set $do_mirror 1;
+    }
+    
+    location /api/ {
+        if ($do_mirror = 1) {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+    
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+이러한 고급 설정을 통해 미러링을 특정 환경이나 요구사항에 맞게 세밀하게 조정할 수 있습니다. 프로덕션 환경에서는 성능 영향을 고려하여 적절한 미러링 전략을 선택하세요.
+
+### 3. 모니터링 추가
+
 ---
 
 ## 🔧 자주 발생하는 문제와 해결 방법
@@ -479,13 +662,173 @@ location /api/ {
 }
 ```
 
-### 3. 모니터링 추가
-- Prometheus + Grafana로 시스템 모니터링 구축
-- ELK 스택으로 로그 분석 시스템 연동
+#### 다양한 서브 경로 미러링 예제
 
-### 4. 분산 환경 설정
-- Docker Swarm 또는 Kubernetes로 확장
-- 여러 NGINX 인스턴스, 서버 인스턴스 구성
+NGINX는 유연한 미러링 설정을 지원합니다. 아래는 다양한 조건과 경로에 따라 미러링을 수행하는 예제입니다.
+
+##### 1. 특정 서브 경로만 미러링
+
+```nginx
+server {
+    listen 80;
+
+    # /api/users/ 경로만 미러링
+    location /api/users/ {
+        mirror /mirror_users/;
+        proxy_pass http://server_a:3000;
+    }
+
+    # /api/products/ 경로만 미러링
+    location /api/products/ {
+        mirror /mirror_products/;
+        proxy_pass http://server_a:3000;
+    }
+
+    # 일반 API 경로 (미러링 없음)
+    location /api/ {
+        proxy_pass http://server_a:3000;
+    }
+
+    # users 미러링을 위한 내부 위치
+    location = /mirror_users/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+
+    # products 미러링을 위한 내부 위치
+    location = /mirror_products/ {
+        internal;
+        proxy_pass http://server_c:3000;  # 다른 서버로 미러링
+    }
+}
+```
+
+##### 2. HTTP 메서드에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # POST 요청만 미러링
+        if ($request_method = "POST") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 3. 쿼리 파라미터에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # debug=true 쿼리 파라미터가 있을 때만 미러링
+        if ($arg_debug = "true") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 4. 특정 헤더 값이나 쿠키에 따른 미러링
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        # 특정 사용자 에이전트만 미러링
+        if ($http_user_agent ~* "PostmanRuntime") {
+            mirror /mirror/;
+        }
+        # 특정 세션 ID를 가진 요청만 미러링
+        if ($cookie_sessionid = "test-session") {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 5. 요청 본문 변경하여 미러링 (주의: 실험적 기능)
+
+```nginx
+server {
+    listen 80;
+
+    location /api/ {
+        mirror /mirror/;
+        proxy_pass http://server_a:3000;
+    }
+
+    location = /mirror/ {
+        internal;
+        
+        # 미러링된 요청에 추가 헤더 전달
+        proxy_set_header X-Mirrored-Request "true";
+        
+        # 요청 본문을 그대로 전달
+        proxy_pass_request_body on;
+        
+        # 원본 HTTP 메서드 유지
+        proxy_method $request_method;
+        
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+##### 6. 트래픽 샘플링 (일부 요청만 미러링)
+
+```nginx
+server {
+    listen 80;
+    
+    # 변수 설정
+    set $do_mirror 0;
+    
+    # 약 10%의 요청만 미러링 (임의 샘플링)
+    if ($request_id ~ "^.{0}[0-9a].*$") {
+        set $do_mirror 1;
+    }
+    
+    location /api/ {
+        if ($do_mirror = 1) {
+            mirror /mirror/;
+        }
+        proxy_pass http://server_a:3000;
+    }
+    
+    location = /mirror/ {
+        internal;
+        proxy_pass http://server_b:3000;
+    }
+}
+```
+
+이러한 고급 설정을 통해 미러링을 특정 환경이나 요구사항에 맞게 세밀하게 조정할 수 있습니다. 프로덕션 환경에서는 성능 영향을 고려하여 적절한 미러링 전략을 선택하세요.
+
+### 3. 모니터링 추가
 
 ---
 
