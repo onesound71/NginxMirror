@@ -16,6 +16,193 @@
 - **로그/분석**: 실제 요청을 분석 시스템으로 복제
 - **장애 감지**: 같은 요청에 대한 두 시스템의 응답 비교
 
+### ❓ 자주 묻는 질문 (FAQ)
+
+### "nginx에서 실시간 트래픽을 복제하려면 어떻게 해야 하나요?"
+
+NGINX에서 실시간 트래픽을 복제하는 기본 방법은 `mirror` 지시어를 사용하는 것입니다. 
+```nginx
+location /api/ {
+    mirror /mirror/;
+    proxy_pass http://main-server:3000;
+}
+
+location = /mirror/ {
+    internal;
+    proxy_pass http://mirror-server:3000;
+}
+```
+이 설정으로 `/api/`로 들어오는 모든 요청이 main-server로 전달되면서 동시에 mirror-server로도 복제됩니다. 클라이언트는 main-server의 응답만 받습니다.
+
+### "nginx로 요청을 다른 서버로 복사하는 방법이 있나요?"
+
+네, NGINX의 `mirror` 모듈을 사용하면 요청을 다른 서버로 복사할 수 있습니다:
+```nginx
+server {
+    listen 80;
+    
+    location / {
+        mirror /mirror;
+        proxy_pass http://primary-server;
+    }
+    
+    location = /mirror {
+        internal;
+        proxy_pass http://secondary-server;
+        proxy_set_header X-Original-URI $request_uri;
+    }
+}
+```
+원본 요청 URI를 추적하고 싶다면 `X-Original-URI` 같은 커스텀 헤더를 통해 전달할 수 있습니다.
+
+### "nginx에서 다크 카나리아 전략을 구현하려면 어떻게 해야 하나요?"
+
+다크 카나리아(Dark Canary) 배포 전략은 실제 트래픽의 복사본을 새 버전으로 보내서 위험 없이 테스트하는 방식입니다:
+
+```nginx
+server {
+    listen 80;
+    
+    # 모든 요청은 기존 버전으로 전달
+    location / {
+        proxy_pass http://stable-version;
+        
+        # 10%의 트래픽을 새 버전으로 미러링 (다크 카나리아)
+        if ($request_id ~ "^.{0}[0-9].*$") {
+            mirror /canary;
+        }
+    }
+    
+    # 카나리아 내부 라우팅
+    location = /canary {
+        internal;
+        proxy_pass http://new-version;
+        proxy_set_header X-Canary-Request "true";
+    }
+}
+```
+
+이렇게 설정하면 클라이언트는 항상 안정 버전에서 응답을 받지만, 약 10%의 요청이 새 버전으로도 동시에 전송되어 모니터링 가능합니다.
+
+### "nginx를 사용한 A/B 테스트 설정 방법은?"
+
+NGINX에서 A/B 테스트를 설정하는 방법은 두 가지가 있습니다:
+
+1. **트래픽 분할**: 일부 사용자는 A 버전, 나머지는 B 버전으로 라우팅
+```nginx
+split_clients "${remote_addr}${http_user_agent}" $variant {
+    50%     "a";
+    *       "b";
+}
+
+server {
+    listen 80;
+    
+    location / {
+        proxy_pass http://version_${variant};
+    }
+}
+
+upstream version_a {
+    server server_a:3000;
+}
+
+upstream version_b {
+    server server_b:3000;
+}
+```
+
+2. **미러링 방식**: 모든 사용자는 A 버전 응답을 받고, B 버전으로도 요청 복제
+```nginx
+server {
+    listen 80;
+    
+    location / {
+        mirror /versionB;
+        proxy_pass http://version_a;
+    }
+    
+    location = /versionB {
+        internal;
+        proxy_pass http://version_b;
+    }
+}
+```
+
+두 번째 방식은 실제 A/B 테스트보다는 '섀도우 테스트'에 가깝습니다.
+
+### "nginx에서 트래픽 리플리케이션을 설정하는 방법은?"
+
+트래픽 리플리케이션은 mirror 모듈을 통해 다음과 같이 설정합니다:
+
+```nginx
+server {
+    listen 80;
+    
+    # 기본 위치 블록
+    location / {
+        proxy_pass http://primary_server;
+        
+        # 모든 요청을 복제
+        mirror /replica;
+    }
+    
+    # 복제 요청을 처리하는 내부 위치
+    location = /replica {
+        internal;
+        proxy_pass http://replica_server;
+        
+        # 복제된 요청임을 알리는 헤더 추가
+        proxy_set_header X-Replicated-Request "true";
+        
+        # 원본 요청 정보 유지
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+복제된 트래픽을 식별하기 위해 `X-Replicated-Request` 같은 커스텀 헤더를 추가할 수 있습니다.
+
+### "nginx로 요청을 복제하여 로깅 서버로 보내는 방법이 있나요?"
+
+NGINX에서 요청을 로깅 서버로 복제하는 설정은 다음과 같습니다:
+
+```nginx
+server {
+    listen 80;
+    
+    location / {
+        # 원본 요청 처리
+        proxy_pass http://application_server;
+        
+        # 로깅 목적으로 요청 복제
+        mirror /logging;
+    }
+    
+    location = /logging {
+        internal;
+        
+        # 로깅 서버로 전달
+        proxy_pass http://logging_server;
+        
+        # 로깅에 필요한 추가 정보 전달
+        proxy_set_header X-Request-Time $request_time;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Client-IP $remote_addr;
+        
+        # 요청 본문 포함
+        proxy_pass_request_body on;
+    }
+}
+```
+
+이 구성을 통해 모든 요청의 상세 정보가 로깅 서버로 전송되며, 원본 애플리케이션의 응답 시간에 영향을 주지 않습니다.
+
 ---
 
 ## 🔍 작동 방식
